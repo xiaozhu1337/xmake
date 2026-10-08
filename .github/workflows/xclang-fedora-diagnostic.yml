@@ -1,0 +1,51 @@
+name: xclang-fedora-diagnostic
+# Temporary fork-only comparison of the PR and its unchanged base.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: base
+            ref: e01ff22a90ea5cac67f53620bbb0981542bd30d8
+          - name: head
+            ref: 28a866eb33b7e998b7a03766c5c21c192518929f
+    env:
+      XMAKE_ROOT: y
+      XMAKE_STATS: false
+    steps:
+      # Match the upstream Fedora workflow's host dependencies.
+      - name: Prepare build tools
+        run: |
+          dnf -y install @development-tools @rpm-development-tools
+          dnf -y install mesa-libGL-devel mesa-libGLU-devel
+          dnf -y install copr-cli make gcc-c++ perl
+          dnf -y upgrade git
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.ref }}
+          submodules: true
+          persist-credentials: false
+      - name: Prepare local xmake
+        run: python3 -c 'import shutil; shutil.copytree(".", "../xmake-source", dirs_exist_ok=True)'
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: local#../xmake-source
+      # Reproduce the exact tests preceding the unrelated install failure.
+      - name: Repository tests
+        run: xmake lua -v -D tests/run.lua actions/addon
+      - name: Local package test
+        run: xmake lua -v -D tests/run.lua actions/package/localpkg
+      - name: Diagnose install configuration
+        continue-on-error: true
+        run: xmake f -P tests/actions/install -c -y -vD
+      - name: Xclang discovery regression
+        if: always() && matrix.name == 'head'
+        run: xmake lua -v -D tests/run.lua toolchains/xclang
